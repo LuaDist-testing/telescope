@@ -1,23 +1,19 @@
-local _G           = _G
-local assert       = assert
-local getfenv      = getfenv
-local io           = io
-local ipairs       = ipairs
-local loadfile     = loadfile
-local next         = next
-local pairs        = pairs
-local require      = require
-local setfenv      = setfenv
-local setmetatable = setmetatable
-local table        = table
-local type         = type
-
 --- Telescope is a test library for Lua that allows for flexible, declarative
 -- tests. The documentation produced here is intended largely for developers
 -- working on Telescope.  For information on using Telescope, please visit the
--- project homepage at: <a href="http://github.com/norman/telescope">http://github.com/norman/telescope</a>.
--- @release 0.4
-module 'telescope'
+-- project homepage at: <a href="http://github.com/norman/telescope">http://github.com/norman/telescope#readme</a>.
+-- @release 0.6
+-- @class module
+-- @module 'telescope'
+local _M = {}
+
+local compat_env = require 'telescope.compat_env'
+
+local getfenv = _G.getfenv or compat_env.getfenv
+local setfenv = _G.setfenv or compat_env.setfenv
+
+
+local _VERSION = "0.6.0"
 
 --- The status codes that can be returned by an invoked test. These should not be overidden.
 -- @name status_codes
@@ -29,7 +25,7 @@ module 'telescope'
 -- @field pending - This is returned when a test does not have a corresponding function.
 -- @field unassertive - This is returned when an invoked test does not produce
 -- errors, but does not contain any assertions.
-status_codes = {
+local status_codes = {
   err         = 2,
   fail        = 4,
   pass        = 8,
@@ -48,7 +44,7 @@ status_codes = {
 -- @field status_codes.pending     '?'
 -- @field status_codes.unassertive 'U'
 
-status_labels = {
+local status_labels = {
   [status_codes.err]         = 'E',
   [status_codes.fail]        = 'F',
   [status_codes.pass]        = 'P',
@@ -60,29 +56,29 @@ status_labels = {
 -- "describe."
 -- @name context_aliases
 -- @class table
-context_aliases = {"context", "describe", "spec"}
+local context_aliases = {"context", "describe", "spec"}
 --- The default names for test blocks. It defaults to "test," "it", "expect",
 -- "they" and "should."
 -- @name test_aliases
 -- @class table
-test_aliases    = {"test", "it", "expect", "should", "they"}
+local test_aliases    = {"test", "it", "expect", "should", "they"}
 
 --- The default names for "before" blocks. It defaults to "before" and "setup."
 -- The function in the before block will be run before each sibling test function
 -- or context.
 -- @name before_aliases
 -- @class table
-before_aliases  = {"before", "setup"}
+local before_aliases  = {"before", "setup"}
 
 --- The default names for "after" blocks. It defaults to "after" and "teardown."
 -- The function in the after block will be run after each sibling test function
 -- or context.
 -- @name after_aliases
 -- @class table
-after_aliases  = {"after", "teardown"}
+local after_aliases  = {"after", "teardown"}
 
 -- Prefix to place before all assertion messages. Used by make_assertion().
-assertion_message_prefix  = "Assert failed: expected "
+local assertion_message_prefix  = "Assert failed: expected "
 
 --- The default assertions.
 -- These are the assertions built into telescope. You can override them or
@@ -118,7 +114,7 @@ assertion_message_prefix  = "Assert failed: expected "
 -- @see make_assertion
 -- @name assertions
 -- @class table
-assertions = {}
+local assertions = {}
 
 --- Create a custom assertion.
 -- This creates an assertion along with a corresponding negative assertion. It
@@ -145,8 +141,8 @@ assertions = {}
 -- </p>
 -- @usage <tt>make_assertion("equal", "%s to be equal to %s", function(a, b)
 -- return a == b end)</tt>
--- @see assertions
-function make_assertion(name, message, func)
+-- @function make_assertion
+local function make_assertion(name, message, func)
   local num_vars = 0
   -- if the last vararg ends up nil, we'll need to pad the table with nils so
   -- that string.format gets the number of args it expects
@@ -158,11 +154,17 @@ function make_assertion(name, message, func)
     format_message = function(message, ...)
       local a = {}
       local args = {...}
-      -- @TODO look into using select("#", ...)
-      for i = 1, #args do
-        table.insert(a, tostring(args[i]))
+      local nargs = select('#', ...)
+      if nargs > num_vars then        
+        local userErrorMessage = args[num_vars+1]
+        if type(userErrorMessage) == "string" then
+          return(assertion_message_prefix .. userErrorMessage)
+        else
+          error(string.format('assert_%s expected %d arguments but got %d', name, num_vars, #args))
+        end
       end
-      while num_vars > 0 and #a ~= num_vars do table.insert(a, 'nil') end
+      for i = 1, nargs do a[i] = tostring(v) end
+      for i = nargs+1, num_vars do a[i] = 'nil' end
       return (assertion_message_prefix .. message):format(unpack(a))
     end
   end
@@ -251,7 +253,7 @@ make_assertion("not_match",    "'%s' not to be a match for %s",            funct
 make_assertion("not_nil",      "'%s' not to be nil",                       function(a) return a ~= nil end)
 make_assertion("not_type",     "'%s' not to be a %s",                      function(a, b) return type(a) ~= b end)
 
---- Build a contexts table from the test file given in <tt>path</tt>.
+--- Build a contexts table from the test file or function given in <tt>target</tt>.
 -- If the optional <tt>contexts</tt> table argument is provided, then the
 -- resulting contexts will be added to it.
 -- <p>
@@ -268,9 +270,9 @@ make_assertion("not_type",     "'%s' not to be a %s",                      funct
 -- </code>
 -- @param contexts A optional table in which to collect the resulting contexts
 -- and function.
-function load_contexts(path, contexts)
-
-  local env = getfenv()
+-- @function load_contexts
+local function load_contexts(target, contexts)
+  local env = {}
   local current_index = 0
   local context_table = contexts or {}
 
@@ -305,11 +307,27 @@ function load_contexts(path, contexts)
   for _, v in ipairs(context_aliases) do env[v] = context_block end
   for _, v in ipairs(test_aliases)    do env[v] = test_block end
 
+  -- Set these functions in the module's meta table to allow accessing
+  -- telescope's test and context functions without env tricks. This will
+  -- however add tests to a context table used inside the module, so multiple
+  -- test files will add tests to the same top-level context, which may or may
+  -- not be desired.
+  setmetatable(_M, {__index = env})
+
   setmetatable(env, {__index = _G})
-  local func, err = assert(loadfile(path))
+
+  local func, err = type(target) == 'string' and assert(loadfile(target)) or target
   if err then error(err) end
   setfenv(func, env)()
   return context_table
+end
+
+-- in-place table reverse.
+function table.reverse(t)
+     local len = #t+1
+     for i=1, (len-1)/2 do
+          t[i], t[len-i] = t[len-i], t[i]
+     end
 end
 
 --- Run all tests.
@@ -356,17 +374,30 @@ end
 -- </ul>
 -- @see load_contexts
 -- @see status_codes
-function run(contexts, callbacks, test_filter)
+-- @function run
+local function run(contexts, callbacks, test_filter)
 
   local results = {}
-  local env = getfenv()
   local status_names = invert_table(status_codes)
   local test_filter = test_filter or function(a) return a end
 
-  for k, v in pairs(assertions) do
-    setfenv(v, env)
-    env[k] = v
+  -- Setup a new environment suitable for running a new test
+  local function newEnv()
+    local env = {}
+
+    -- Make sure globals are accessible in the new environment
+    setmetatable(env, {__index = _G})
+
+    -- Setup all the assert functions in the new environment
+    for k, v in pairs(assertions) do
+      setfenv(v, env)
+      env[k] = v
+    end
+
+    return env
   end
+
+  local env = newEnv()
 
   local function invoke_callback(name, test)
     if not callbacks then return end
@@ -383,7 +414,7 @@ function run(contexts, callbacks, test_filter)
       assertions_invoked = assertions_invoked + 1
     end
     setfenv(func, env)
-    local result, message = pcall(func)
+    local result, message = xpcall(func, debug.traceback)
     if result and assertions_invoked > 0 then
       return status_codes.pass, assertions_invoked, nil
     elseif result then
@@ -396,6 +427,8 @@ function run(contexts, callbacks, test_filter)
   end
 
   for i, v in filter(contexts, function(i, v) return v.test and test_filter(v) end) do
+    env = newEnv()    -- Setup a new environment for this test
+
     local ancestors = ancestors(i, contexts)
     local context_name = 'Top level'
     if contexts[i].parent ~= 0 then
@@ -410,10 +443,15 @@ function run(contexts, callbacks, test_filter)
     table.sort(ancestors)
     -- this "before" is the test callback passed into the runner
     invoke_callback("before", result)
-    -- this "before" is the "before" block in the test.
+    
+    -- run all the "before" blocks/functions
     for _, a in ipairs(ancestors) do
-      if contexts[a].before then contexts[a].before() end
+      if contexts[a].before then 
+        setfenv(contexts[a].before, env)
+        contexts[a].before() 
+      end
     end
+
     -- check if it's a function because pending tests will just have "true"
     if type(v.test) == "function" then
       result.status_code, result.assertions_invoked, result.message = invoke_test(v.test)
@@ -423,9 +461,16 @@ function run(contexts, callbacks, test_filter)
       invoke_callback("pending", result)
     end
     result.status_label = status_labels[result.status_code]
+
+    -- Run all the "after" blocks/functions
+    table.reverse(ancestors)
     for _, a in ipairs(ancestors) do
-      if contexts[a].after then contexts[a].after() end
+      if contexts[a].after then 
+        setfenv(contexts[a].after, env)
+        contexts[a].after() 
+      end
     end
+
     invoke_callback("after", result)
     results[i] = result
   end
@@ -437,7 +482,8 @@ end
 --- Return a detailed report for each context, with the status of each test.
 -- @param contexts The contexts returned by <tt>load_contexts</tt>.
 -- @param results The results returned by <tt>run</tt>.
-function test_report(contexts, results)
+-- @function test_report
+local function test_report(contexts, results)
 
   local buffer               = {}
   local leading_space        = "  "
@@ -480,7 +526,8 @@ end
 --- Return a table of stack traces for tests which produced a failure or an error.
 -- @param contexts The contexts returned by <tt>load_contexts</tt>.
 -- @param results The results returned by <tt>run</tt>.
-function error_report(contexts, results)
+-- @function error_report
+local function error_report(contexts, results)
   local buffer = {}
   for _, r in filter(results, function(i, r) return r.message end) do
     local name = contexts[r.test].name
@@ -498,7 +545,8 @@ end
 -- <tt>pending</tt>, <tt>tests</tt>, <tt>unassertive</tt>.
 -- @param contexts The contexts returned by <tt>load_contexts</tt>.
 -- @param results The results returned by <tt>run</tt>.
-function summary_report(contexts, results)
+-- @function summary_report
+local function summary_report(contexts, results)
   local r = {
     assertions  = 0,
     errors      = 0,
@@ -529,3 +577,21 @@ function summary_report(contexts, results)
   end
   return table.concat(buffer, " "), r
 end
+
+_M.after_aliases            = after_aliases
+_M.make_assertion           = make_assertion
+_M.assertion_message_prefix = assertion_message_prefix
+_M.before_aliases           = before_aliases
+_M.context_aliases          = context_aliases
+_M.error_report             = error_report
+_M.load_contexts            = load_contexts
+_M.run                      = run
+_M.test_report              = test_report
+_M.status_codes             = status_codes
+_M.status_labels            = status_labels
+_M.summary_report           = summary_report
+_M.test_aliases             = test_aliases
+_M.version                  = _VERSION
+_M._VERSION                 = _VERSION
+
+return _M
