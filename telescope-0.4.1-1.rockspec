@@ -1,8 +1,17 @@
+-- This file was automatically generated for the LuaDist project.
+
 package = "telescope"
-version = "scm-1"
+version = "0.4.1-1"
+-- LuaDist source
 source = {
-   url = "git://github.com/norman/telescope.git",
+  tag = "0.4.1-1",
+  url = "git://github.com/LuaDist-testing/telescope.git"
 }
+-- Original source
+-- source = {
+--    url = "http://cloud.github.com/downloads/norman/telescope/telescope-0.4.1.tar.gz",
+--    md5 = "e240350716994873fe1ad7f67918c3b2"
+-- }
 description = {
    summary = "A test/spec library for Lua.",
    detailed = [[
